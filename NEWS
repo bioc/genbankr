@@ -1,3 +1,14 @@
+Changes in version 1.0.4
+------------------------
+
+BUGFIXES
+
+      o Backported bugfix from 1.1.4 for bug when mRNA features do not have 
+      	gene annotations.
+
+      o Backported bugfix from 1.1.4 for when compound ranges (join, order)
+      	include partial ranges.
+
 Changes in version 1.0.3
 ------------------------
 

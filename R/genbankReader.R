@@ -201,16 +201,32 @@ strip_outer_operator = function(str, op = "complement") {
 .do_join_silliness = function(str, chr, ats, partial = NA, strand = NA) {
     
                                         #    if(grepl("^join", str))
+    if(is.na(partial) || !partial) {
+        part = grepl("[<>]", str)
+        if(part) {
+            if(is.na(partial))
+                message("Partial range detected in a compound range (join or order) feature. Excluding entire annotation")
+            return(
+                data.frame(seqnames = character(),
+                           start = numeric(),
+                           end = numeric(),
+                           strand = character(),
+                           type = character(),
+                           stringsAsFactors=FALSE)
+            )
+        }
+    }
+        
     sstr = substr(str, 1, 1)
     if(sstr == "j") ##join
         str = strip_outer_operator(str, "join")
-    else if(sstr == "o") ## order (grepl("^order", str))
+    else if(sstr == "o") ## order 
         str = strip_outer_operator(str, "order")
     spl = strsplit(str, ",", fixed=TRUE)[[1]]
     grs = lapply(spl, make_feat_gr, chr = chr, ats = ats,
                  partial = partial, strand = strand)
-    ##    do.call(rbind.data.frame, grs)
     .simple_rbind_dataframe(grs)
+
 }
 
 
@@ -222,8 +238,6 @@ make_feat_gr = function(str, chr, ats, partial = NA, strand = NA) {
     } 
     
     
-    ##    if (grepl("(join|order)", str))
-    ##    if(grepl("join", fixed=TRUE, str) | grepl("order", str, fixed=TRUE))
     sbstr = substr(str, 1, 4)
     if(sbstr == "join" || sbstr == "orde")
         return(.do_join_silliness(str = str, chr = chr,
@@ -263,7 +277,6 @@ make_feat_gr = function(str, chr, ats, partial = NA, strand = NA) {
 
 read_feat_attr = function(line) {
     num =  grepl('=[[:digit:]]+(\\.[[:digit:]]+){0,1}$', line)
-    #val = gsub('[[:space:]]*/[^=]+="{0,1}([^"]*)"{0,1}', "\\1", line)
     val = gsub('[[:space:]]*/[^=]+($|="{0,1}([^"]*)"{0,1})', "\\2", line)
     mapply(function(val, num) {
         if(nchar(val)==0)
@@ -318,7 +331,7 @@ readFeatures = function(lines, partial = NA, verbose = FALSE,
         ## consume primary feature line
         lines = lines[-1] 
         if(length(lines)) {
-            attrs = read_feat_attr(lines)#lapply(lines, read_feat_attr)
+            attrs = read_feat_attr(lines)
             
             names(attrs) = gsub("^[[:space:]]*/([^=]+)($|=[^[:space:]].*$)", "\\1", lines)
             if(type == "source") {
@@ -505,62 +518,60 @@ parseGenBank = function(file, text = readLines(file),  partial = NA,
 multivalfields = c("db_xref", "EC_number", "gene_synonym", "old_locus_tag")
 
 fill_stack_df = function(dflist, cols, fill.logical = TRUE, sqinfo = NULL) {
-    if(length(dflist) == 0)
+    if(length(dflist) == 0 )
         return(NULL)
-   # if(length(dflist) > 1) {
 
-        allcols = unique(unlist(lapply(dflist, function(x) names(x))))
-        basenms = gsub("(.*)(\\.[[:digit:]]+)$", "\\1", allcols)
-        nmtab = table(basenms)
-        dupnms = names(nmtab[nmtab>1])
-        if(any(!dupnms %in% multivalfields))
-            warning("Got unexpected multi-value field(s) [ ",
-                    paste(setdiff(dupnms, multivalfields), collapse = ", "),
-                    " ]. The resulting column(s) will be of class CharacterList, rather than vector(s). Please contact the maintainer if multi-valuedness is expected/meaningful for the listed field(s).")
-        allcols = unique(basenms)
-        
-        logcols = unique(unlist(lapply(dflist, function(x) names(x)[sapply(x, is.logical)])))
-        charcols = setdiff(allcols, logcols)
-        
-        if(missing(cols))
-            cols = allcols
-        
-        filled = mapply(
-            function(x, i) {
-            ## have to deal with arbitrary multiple columns
-            ## transform them into list columns
-            for(nm in dupnms) {
-                locs = grep(nm, names(x))
-                if(length(locs)) {
-                    rows = lapply(seq(along = rownames(x)),
-                                         function(y) unlist(x[y,locs]))
-                           
-                    x = x[,-locs]
-                } else {
-                    rows = list(character())
-                }
+    dflist = dflist[sapply(dflist, function(x) !is.null(x) && nrow(x) > 0)]
 
-                x[[nm]] = rows
+
+    allcols = unique(unlist(lapply(dflist, function(x) names(x))))
+    basenms = gsub("(.*)(\\.[[:digit:]]+)$", "\\1", allcols)
+    nmtab = table(basenms)
+    dupnms = names(nmtab[nmtab>1])
+    if(any(!dupnms %in% multivalfields))
+        warning("Got unexpected multi-value field(s) [ ",
+                paste(setdiff(dupnms, multivalfields), collapse = ", "),
+                " ]. The resulting column(s) will be of class CharacterList, rather than vector(s). Please contact the maintainer if multi-valuedness is expected/meaningful for the listed field(s).")
+    allcols = unique(basenms)
+    
+    logcols = unique(unlist(lapply(dflist, function(x) names(x)[sapply(x, is.logical)])))
+    charcols = setdiff(allcols, logcols)
+    
+    if(missing(cols))
+        cols = allcols
+    
+    filled = mapply(
+        function(x, i) {
+        ## have to deal with arbitrary multiple columns
+        ## transform them into list columns
+        for(nm in dupnms) {
+            locs = grep(nm, names(x))
+            if(length(locs)) {
+                rows = lapply(seq(along = rownames(x)),
+                              function(y) unlist(x[y,locs]))
+                
+                x = x[,-locs]
+            } else {
+                rows = list(character())
             }
+            
+            x[[nm]] = rows
+        }
         
         
-
+        
         ## setdiff is not symmetric
-            missnm = setdiff(charcols, names(x))
-            x[,missnm] = NA_character_
-            falsenm = setdiff(logcols, names(x))
-            x[,falsenm] = FALSE
-            x = x[,cols]
-            x$temp_grouping_id = i
-            x
-        }, x = dflist, i = seq(along = dflist), SIMPLIFY=FALSE)
- #   stk = do.call(rbind, c(filled, deparse.level=0, make.row.names=FALSE))
-        stk = .simple_rbind_dataframe(filled, "temp")
-    ## } else {
-    ##     stk = dflist[[1]]
-    ## }
+        missnm = setdiff(charcols, names(x))
+        x[,missnm] = NA_character_
+        falsenm = setdiff(logcols, names(x))
+        x[,falsenm] = FALSE
+        x = x[,cols]
+        x$temp_grouping_id = i
+        x
+    }, x = dflist, i = seq(along = dflist), SIMPLIFY=FALSE)
+    stk = .simple_rbind_dataframe(filled, "temp")
     stk[["temp"]] = NULL
-
+    
     listcols = which(sapply(names(stk),
                             function(x) is(stk[[x]], "list") ||
                                         x %in% multivalfields))
@@ -597,15 +608,30 @@ fill_stack_df = function(dflist, cols, fill.logical = TRUE, sqinfo = NULL) {
     grstk
 }
 
-.getGeneIdVec = function(ranges) {
 
-    if(!is.null(ranges$locus_tag))
-        ranges$locus_tag
-    else if(!is.null(ranges$gene)) {
-        message("CDS annotations do not have 'locus_tag' label, using 'gene' as gene_id")
-        ranges$gene
-    } else
+allna = function(vec) all(is.na(vec))
+
+.getGeneIdLab = function(ranges, verbose, stoponfail = FALSE) {
+    cols = names(mcols(ranges))
+    if("gene_id" %in% cols && !allna(ranges$gene_id))
+        "gene_id"
+    else if("locus_tag" %in% cols)
+        "locus_tag"
+    else if ("gene" %in% cols) {
+        if(verbose)
+            message("Annotations don't have 'locus_tag' label, using 'gene' as gene_id column")
+        "gene"
+    } else if (stoponfail)
+        stop("Unable to determine gene id column on feature GRanges object")
+    else
         NULL
+}
+
+.getGeneIdVec = function(ranges) {
+    res = .getGeneIdLab(ranges, verbose = TRUE)
+    if(!is.null(res))
+        res = mcols(ranges)[[res]]
+    res
 }
 
 
@@ -633,14 +659,6 @@ make_cdsgr = function(rawcdss, gns, sqinfo) {
 
     havegenelabs = FALSE
     
-#    if(is.null(rawcdss$gene) && !is.null(rawcdss$locus_tag)) {
-    ## if(is.null(rawcdss$locus_tag) && !is.null(rawcdss$gene)) {
-    ##     message("CDS annotations do not have 'locus_tag' label, using 'gene' as gene_id")
-    ##     rawcdss$gene_id = rawcdss$gene
-    ## } else if(!is.null(rawcdss$locus_tag)) {
-    ##     rawcdss$gene_id = rawcdss$locustag
-    ## } 
-
     rawcdss$gene_id = .getGeneIdVec(rawcdss)
         
     if(!is.null(rawcdss$gene_id) && !anyNA(rawcdss$gene_id)) {
@@ -659,21 +677,97 @@ make_cdsgr = function(rawcdss, gns, sqinfo) {
 
     cdss = rawcdss
     cdss$transcript_id = newid
-    ## cdsslst = GRangesList(cdssraw)
-    ## cdss = unlist(cdsslst)
     cdss$temp_grouping_id = NULL
     cdss
 }
 
 
-make_txgr = function(rawtxs, exons, sqinfo) {
-    ##    rawtxs = sanitize_feats(rawtxs, tx_cols)
+.gnMappingHlpr = function(gnfeat, txfeatlst, knownlabs,
+                          splcol = .getGeneIdLab(gnfeat, stoponfail=TRUE,
+                                                 verbose=FALSE),
+                          olaptype = "within", stopondup = TRUE) {
+    unknown = which(is.na(knownlabs))
+    ## is it already split?
+    if(!is(gnfeat, "GRangesList"))
+        gnfeat = split(gnfeat, mcols(gnfeat)[[splcol]])
+    hts = findOverlaps(gnfeat, txfeatlst, type=olaptype, select="all")
+    ## duplicated queryHits is ok b/c gene can have more than one tx, right?
+    subhits = subjectHits(hts)
+    if(anyDuplicated(subhits)) {
+        duphits = which(duplicated(subhits))
+        dupstart = start(phead(txfeatlst[duphits], 1))
+        
+        if(stopondup)
+            stop("mRNA feature(s) starting at [",
+                 paste(as.vector(dupstart), collapse=", "),
+                 "] appear to match more than one gene. If you feel the file is",
+                 " correct please contact the maintainer.")
+        else { # throw away dup hits so they stay NA
+            hts = hts[subhits %in% subhits[duphits],]
+            subhits = subjectHits(hts)
+        }
+    }
+    ## don't override information that we already know.
+    ## if efficiency of this routine ever becomes an issue
+    ## this subsetting should be pushed up before the overlap
+    ## calcs, but the indexing is simpler here and I don't
+    ## think it will be too slow. We'll see ....
+
+    keep = subhits %in% unknown
+    
+    knownlabs[ subhits[ keep ] ] = names(gnfeat)[ queryHits(hts)[ keep ] ]
+    knownlabs
+}
+
+
+##' @param rawtx GRanges. Raw transcript (mRNA) feature GRanges
+##' @param exons GRanges. Exon feature GRanges
+##' @param genes GRanges. genes 
+assignTxsToGenes = function(rawtx, exons, genes) {
+
+    txspl = split(rawtx, rawtx$temp_grouping_id)
+
+    gnlabs = rep(NA_character_, times = length(txspl))
+    
+    ## exon mapping is more precise, try that first.    
+    ## exons should fall strictly within transcript sections
+    ## not identical b/c of padding at ends. AFAIK should
+    ## be identical for internal exons, but we aren't
+    ## specifically checking for that here.
+
+    gnlabs = .gnMappingHlpr(exons, txspl, gnlabs)
+    if(anyNA(gnlabs)) {
+        
+        ## damn, now we have to try with genes
+        gnlabs = .gnMappingHlpr(genes, txspl, gnlabs,
+                            olaptype = "any",
+                            stopondup=FALSE)
+
+    }
+    
+    rawtx$gene_id= rep(gnlabs, times = lengths(txspl))
+    rawtx
+
+}
+
+
+
+
+make_txgr = function(rawtxs, exons, sqinfo, genes) {
     if(length(rawtxs) > 0) {
         rawtxs = fill_stack_df(rawtxs, sqinfo = sqinfo)
-        rawtxs$tx_id_base = ifelse(is.na(rawtxs$gene), paste("unknown_gene", cumsum(is.na(rawtxs$gene)), sep="_"), rawtxs$gene)
+        gvec = .getGeneIdVec(rawtxs)
+        if(is.null(gvec)) {
+            rawtxs = assignTxsToGenes(rawtxs, exons, genes)
+            gvec = .getGeneIdVec(rawtxs)
+        }
+            
+        rawtxs$tx_id_base = ifelse(is.na(gvec), paste("unknown_gene", cumsum(is.na(gvec)), sep="_"), gvec)
         spltxs = split(rawtxs, rawtxs$tx_id_base)
         txsraw = lapply(spltxs, function(grl) {
-            grl$transcript_id = paste(grl$tx_id_base, 1:length(grl), 
+            grl$transcript_id = paste(grl$tx_id_base, (grl$temp_grouping_id -
+                                                       min(grl$temp_grouping_id) +
+                                                       1),
                                       sep=".")
             grl$tx_id_base = NULL
             grl
@@ -714,10 +808,6 @@ make_varvr = function(rawvars, sq, sqinfo) {
     ## if none of them do, the column won't exist at all
     if(is.null(vrs$replace))
         vrs$replace = NA_character_
-    ## if(any(is.na(vrs$replace))) {
-    ##     warning("Removing seemingly unspecified variation features (no /replace)")
-    ##     vrs = vrs[!is.na(vrs$replace)]
-    ## }
 
     ## makeVRangesFromGRanges seems to have a bug(?) that requires the
     ## columns used dfor the VRanges core info to be the first 6 in the
@@ -842,7 +932,7 @@ make_gbrecord = function(rawgbk, verbose = FALSE) {
     if(verbose)
         message(Sys.time(), " Starting creation of transcript GRanges")
 
-    txs = make_txgr(featspl$mRNA, exons = exns, sqinfo)
+    txs = make_txgr(featspl$mRNA, exons = exns, sqinfo, genes = gns)
     
     if(verbose)
         message(Sys.time(), " Starting creation of misc feature GRanges")

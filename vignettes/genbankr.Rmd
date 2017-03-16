@@ -5,7 +5,7 @@ output:
   BiocStyle::html_document
 vignette: >
   %\VignetteIndexEntry{genbankr}
-  %\VignetteEngine{rmarkdown::rmarkdown}
+  %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}  
 ---
 
